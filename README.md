@@ -17,7 +17,7 @@ A Python toolkit for the ConnectWise Manage API with full type support and error
 ## Installation
 
 ```bash
-pip install connectwise-manage  # When published
+pip install ConnectPyse-Manage
 ```
 
 For development:
