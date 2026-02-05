@@ -322,8 +322,8 @@ conditions = "(closedFlag=false AND priority/id>=8) OR summary contains 'urgent'
 
 ```bash
 # Clone the repository
-git clone https://github.com/Ruderali/ConnectPyse.git
-cd ConnectPyse
+git clone https://github.com/Ruderali/ConnectPyse-Manage.git
+cd ConnectPyse-Manage
 
 # Install in development mode
 pip install -e .
@@ -356,7 +356,7 @@ MIT License - see LICENSE file for details
 ## Support
 
 For issues and questions:
-- GitHub Issues: [Ruderali/ConnectPyse/issues](https://github.com/Ruderali/ConnectPyse/issues)
+- GitHub Issues: [Ruderali/ConnectPyse-Manage/issues](https://github.com/Ruderali/ConnectPyse-Manage/issues)
 - Documentation: See `docs/` directory
 
 ---

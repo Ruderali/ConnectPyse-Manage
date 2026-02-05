@@ -51,10 +51,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Ruderali/ConnectPyse"
-Documentation = "https://github.com/Ruderali/ConnectPyse/blob/main/docs/api-reference.md"
-Repository = "https://github.com/Ruderali/ConnectPyse"
-Issues = "https://github.com/Ruderali/ConnectPyse/issues"
+Homepage = "https://github.com/Ruderali/ConnectPyse-Manage"
+Documentation = "https://github.com/Ruderali/ConnectPyse-Manage/blob/main/docs/api-reference.md"
+Repository = "https://github.com/Ruderali/ConnectPyse-Manage"
+Issues = "https://github.com/Ruderali/ConnectPyse-Manage/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
