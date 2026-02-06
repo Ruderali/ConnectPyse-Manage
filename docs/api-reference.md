@@ -634,6 +634,140 @@ if success:
     print("Configuration detached")
 ```
 
+### create_configuration
+
+Create a new configuration item in ConnectWise.
+
+```python
+config = client.create_configuration(
+    config: Configuration
+) -> Configuration
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config` | `Configuration` | Yes | Configuration object with fields populated. The `id` field is ignored (CW assigns it). |
+
+**Returns:** Created `Configuration` object with CW-assigned ID
+
+**Example:**
+
+```python
+config = Configuration(
+    id=0,
+    name="SRV-PROD-01",
+    company={"id": 250},
+    type={"id": 158},
+    status={"id": 2},
+    location={"id": 11},
+    site={"id": 1298},
+    ipAddress="10.10.1.50",
+    osType="Windows Server 2022",
+    serialNumber="DELL-ABC123",
+)
+
+created = cw.create_configuration(config)
+print(f"Created config #{created.id}: {created.name}")
+```
+
+### update_configuration
+
+Update an existing configuration item using PATCH. Builds JSON-Patch operations from non-None fields on the config object.
+
+```python
+config = client.update_configuration(
+    config_id: int,
+    config: Configuration
+) -> Configuration
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config_id` | `int` | Yes | ID of the configuration to update |
+| `config` | `Configuration` | Yes | Configuration object with fields to update. Only non-None optional fields generate patch operations. |
+
+**Returns:** Updated `Configuration` object
+
+**Example:**
+
+```python
+patch = Configuration(
+    id=0,
+    name="SRV-PROD-01 (Updated)",
+    company={"id": 250},
+    type={"id": 158},
+    status={"id": 2},
+    ipAddress="10.10.1.55",
+    ram="262144",
+)
+
+updated = cw.update_configuration(config_id=39661, config=patch)
+print(f"Updated IP: {updated.ipAddress}")
+```
+
+### delete_configuration
+
+Delete a configuration item.
+
+```python
+success = client.delete_configuration(
+    config_id: int
+) -> bool
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config_id` | `int` | Yes | Configuration ID to delete |
+
+**Returns:** `True` if deleted, `False` if not found
+
+**Example:**
+
+```python
+success = cw.delete_configuration(config_id=39661)
+if success:
+    print("Configuration deleted")
+```
+
+### get_configuration_type_questions
+
+Get the custom question definitions for a configuration type. Useful for resolving question names to IDs.
+
+```python
+questions = client.get_configuration_type_questions(
+    type_id: int
+) -> List[dict]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type_id` | `int` | Yes | Configuration type ID |
+
+**Returns:** List of question definition dicts, each containing `id`, `question` (label), `fieldType`, etc.
+
+> **Note:** The type questions endpoint returns `id` as the question identifier key, not `questionId`. The `questionId` key only appears on question entries within a configuration item's own `questions` list. The `set_question_by_name` helper handles both formats.
+
+**Example:**
+
+```python
+questions = cw.get_configuration_type_questions(type_id=158)
+for q in questions:
+    qid = q.get("questionId") or q.get("id")
+    print(f"  [{qid}] {q['question']} ({q['fieldType']})")
+# Output:
+#   [1214] NTLocalAdmin (Password)
+#   [1215] Engineer Notes (TextArea)
+#   [1216] Installed Roles (TextArea)
+```
+
 ---
 
 ## Notes
@@ -979,15 +1113,36 @@ if ticket.is_closed:
 
 Dataclass representing a ConnectWise configuration (device/asset).
 
-**Key Attributes:**
+**Required Attributes:**
 - `id: int` - Configuration ID
 - `name: str` - Configuration name
-- `company: dict` - Company information
-- `type: dict` - Type information
-- `status: dict` - Status information
+- `company: dict` - Company information (e.g. `{"id": 250}`)
+- `type: dict` - Type information (e.g. `{"id": 158}`)
+- `status: dict` - Status information (e.g. `{"id": 2}`)
+
+**Optional Attributes:**
+- `location: Optional[dict]` - Location (e.g. `{"id": 11, "name": "Kewdale"}`)
+- `site: Optional[dict]` - Site (e.g. `{"id": 1298, "name": "Head Office"}`)
+- `contact: Optional[dict]` - Contact (e.g. `{"id": 6191}`)
+- `department: Optional[dict]` - Department (e.g. `{"id": 2, "identifier": "Ops Team"}`)
+- `locationId: Optional[int]` - Location ID
+- `businessUnitId: Optional[int]` - Business unit ID
+- `companyLocationId: Optional[int]` - Company location ID
 - `serialNumber: Optional[str]` - Serial number
+- `modelNumber: Optional[str]` - Model number
 - `ipAddress: Optional[str]` - IP address
-- `activeFlag: bool` - Whether active
+- `macAddress: Optional[str]` - MAC address
+- `osType: Optional[str]` - Operating system type
+- `osInfo: Optional[str]` - OS version info
+- `cpuSpeed: Optional[str]` - CPU speed
+- `ram: Optional[str]` - RAM amount
+- `localHardDrives: Optional[str]` - Drive info
+- `questions: Optional[list]` - Custom questions/fields
+- `activeFlag: bool` - Whether active (default: `True`)
+- `billFlag: bool` - Whether billable (default: `False`)
+- `showRemoteFlag: Optional[bool]` - Show remote link
+- `showAutomateFlag: Optional[bool]` - Show automate link
+- `needsRenewalFlag: Optional[bool]` - Needs renewal
 
 **Properties:**
 - `company_name: str` - Company name
@@ -1001,6 +1156,42 @@ Dataclass representing a ConnectWise configuration (device/asset).
 - `installation_datetime: Optional[datetime]` - Parsed installation date
 - `warranty_expiration_datetime: Optional[datetime]` - Parsed warranty expiration
 
+**Methods:**
+
+#### `to_dict(exclude_none=True, exclude_id=False)`
+
+Convert Configuration to an API-compatible dict for POST/PATCH.
+
+```python
+config = Configuration(id=0, name="SRV-01", company={"id": 250}, type={"id": 158}, status={"id": 2})
+data = config.to_dict(exclude_id=True)
+# Returns: {"name": "SRV-01", "company": {"id": 250}, "type": {"id": 158}, "status": {"id": 2}, ...}
+```
+
+#### `set_question(question_id, answer)`
+
+Set or update a custom question answer by question ID.
+
+```python
+config.set_question(1214, "my_password")
+```
+
+#### `set_question_by_name(name, answer, question_definitions)`
+
+Set or update a custom question answer by matching its label (case-insensitive). Requires the question definitions list from `get_configuration_type_questions()`. Raises `ValueError` if no matching question is found.
+
+```python
+# Fetch question definitions once per type
+qdefs = cw.get_configuration_type_questions(type_id=158)
+
+config = Configuration(id=0, name="SRV-01", company={"id": 250}, type={"id": 158}, status={"id": 2})
+config.set_question_by_name("NTLocalAdmin", "my_password", qdefs)
+config.set_question_by_name("Engineer Notes", "Fresh install", qdefs)
+config.set_question_by_name("Installed Roles", "DC, DNS, DHCP", qdefs)
+
+created = cw.create_configuration(config)
+```
+
 **Example:**
 
 ```python
@@ -1008,6 +1199,7 @@ config = cw.get_configuration(config_id=67890)
 print(f"{config.name} - {config.type_name}")
 print(f"IP: {config.ipAddress}")
 print(f"Serial: {config.serialNumber}")
+print(f"Location: {config.location}")
 print(f"Active: {config.is_active}")
 ```
 

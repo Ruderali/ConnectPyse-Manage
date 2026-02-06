@@ -92,3 +92,66 @@ class ConfigurationMixin:
         """
         conditions = f"company/id={company_id}"
         return self.get_configurations(conditions=conditions)
+
+    def get_configuration_type_questions(self, type_id: int) -> List[dict]:
+        """
+        Get the custom question definitions for a configuration type.
+
+        Args:
+            type_id: The configuration type ID.
+
+        Returns:
+            List[dict]: List of question definitions, each containing
+                        'questionId', 'question' (label), 'fieldType', etc.
+        """
+        results = self.get_all(f"company/configurations/types/{type_id}/questions")
+        return results
+
+    def create_configuration(self, config: Configuration) -> Configuration:
+        """
+        Create a new configuration item in ConnectWise.
+
+        Args:
+            config: Configuration object with fields populated.
+                    The id field is ignored (CW assigns it).
+
+        Returns:
+            Configuration: The created configuration with CW-assigned id.
+        """
+        data = config.to_dict(exclude_id=True)
+        result = self.post("company/configurations", data=data)
+        return Configuration.from_dict(result)
+
+    def update_configuration(self, config_id: int, config: Configuration) -> Configuration:
+        """
+        Update an existing configuration item using PATCH.
+
+        Builds JSON-Patch operations from non-None fields on the config object.
+
+        Args:
+            config_id: ID of the configuration to update.
+            config: Configuration object with fields to update populated.
+                    Only non-None optional fields generate patch operations.
+
+        Returns:
+            Configuration: The updated configuration.
+        """
+        data = config.to_dict(exclude_id=True)
+        operations = [
+            {"op": "replace", "path": field, "value": value}
+            for field, value in data.items()
+        ]
+        result = self.patch("company/configurations", config_id, operations)
+        return Configuration.from_dict(result)
+
+    def delete_configuration(self, config_id: int) -> bool:
+        """
+        Delete a configuration item.
+
+        Args:
+            config_id: Configuration ID to delete.
+
+        Returns:
+            bool: True if deleted, False if not found.
+        """
+        return self.delete("company/configurations", config_id)
