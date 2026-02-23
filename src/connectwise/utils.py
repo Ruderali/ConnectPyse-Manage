@@ -1,5 +1,18 @@
 """Utility classes and functions for ConnectWise integration."""
 
+from datetime import datetime
+from typing import Optional
+
+
+def parse_cw_datetime(value: Optional[str]) -> Optional[datetime]:
+    """Parse a ConnectWise API datetime string into a datetime object."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return None
+
 
 class SecretString:
     """

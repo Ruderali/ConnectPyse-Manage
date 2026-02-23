@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+from connectwise.utils import parse_cw_datetime
 
 
 @dataclass
@@ -82,13 +83,7 @@ class Note:
 
     @property
     def created_datetime(self) -> Optional[datetime]:
-        """Parse dateCreated as a datetime object."""
-        if not self.dateCreated:
-            return None
-        try:
-            return datetime.fromisoformat(self.dateCreated.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.dateCreated)
 
     def __str__(self) -> str:
         """String representation showing key note details."""

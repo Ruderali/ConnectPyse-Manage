@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+from connectwise.utils import parse_cw_datetime
 
 
 @dataclass
@@ -32,15 +33,18 @@ class Ticket:
     automaticEmailContactFlag: bool = False
     automaticEmailResourceFlag: bool = False
     automaticEmailCcFlag: bool = False
-    
+    lastUpdated: Optional[str] = None
+    updatedBy: Optional[str] = None
+    dateEntered: Optional[str] = None
+
     @classmethod
     def from_dict(cls, data: dict) -> 'Ticket':
         """
         Create a Ticket instance from a dictionary.
-        
+
         Args:
             data: Dictionary containing ticket data from API
-            
+
         Returns:
             Ticket: Ticket object
         """
@@ -49,9 +53,14 @@ class Ticket:
             field for field in cls.__dataclass_fields__.keys()
         }
         filtered_data = {
-            key: value for key, value in data.items() 
+            key: value for key, value in data.items()
             if key in valid_fields
         }
+        # Pull _info fields into top-level
+        info = data.get("_info", {})
+        for field in ("lastUpdated", "updatedBy", "dateEntered"):
+            if field in info:
+                filtered_data[field] = info[field]
         return cls(**filtered_data)
     
     @property
@@ -106,23 +115,19 @@ class Ticket:
     
     @property
     def closed_datetime(self) -> Optional[datetime]:
-        """Parse closedDate as a datetime object."""
-        if not self.closedDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.closedDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
-    
+        return parse_cw_datetime(self.closedDate)
+
     @property
     def required_datetime(self) -> Optional[datetime]:
-        """Parse requiredDate as a datetime object."""
-        if not self.requiredDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.requiredDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.requiredDate)
+
+    @property
+    def last_updated_datetime(self) -> Optional[datetime]:
+        return parse_cw_datetime(self.lastUpdated)
+
+    @property
+    def date_entered_datetime(self) -> Optional[datetime]:
+        return parse_cw_datetime(self.dateEntered)
     
     def __str__(self) -> str:
         """String representation showing key ticket details."""

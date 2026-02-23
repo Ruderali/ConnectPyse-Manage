@@ -271,6 +271,25 @@ actual_password = cw._password.get_secret_value()
 
 ## Common Pitfalls to Avoid
 
+### ❌ Don't: Write Inline Datetime Parsing
+
+All ConnectWise API datetime strings share the same ISO 8601 format. Use the existing helper instead of duplicating the logic.
+
+```python
+# ❌ Wrong - duplicates existing logic
+from datetime import datetime
+date = datetime.fromisoformat(ticket.lastUpdated.replace('Z', '+00:00'))
+
+# ✅ Right - use the shared helper
+from connectwise.utils import parse_cw_datetime
+date = parse_cw_datetime(ticket.lastUpdated)
+
+# ✅ Even better - use the property on the dataclass
+date = ticket.last_updated_datetime
+```
+
+When adding datetime fields to any model, add a property that calls `parse_cw_datetime` rather than inlining the parsing.
+
 ### ❌ Don't: Use .get() on Dataclass Attributes
 
 ```python
@@ -363,6 +382,7 @@ except ConnectWiseRateLimitError as e:
 4. **Use properties on dataclasses** - Cleaner than dict access
 5. **Be specific about conditions** - Help users avoid 100k+ result queries
 6. **Suggest ticket_defaults** - For apps creating many similar tickets
+7. **Use `parse_cw_datetime` for datetime parsing** - Don't write inline `fromisoformat` logic; use the shared helper from `connectwise.utils`
 
 ## Example: Complete Ticket Workflow
 

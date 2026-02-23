@@ -1083,6 +1083,9 @@ Dataclass representing a ConnectWise ticket.
 - `status: dict` - Status information
 - `closedFlag: bool` - Whether ticket is closed
 - `closedDate: Optional[str]` - Close date (ISO string)
+- `lastUpdated: Optional[str]` - Last updated timestamp from `_info` (ISO string)
+- `updatedBy: Optional[str]` - Username of last update from `_info`
+- `dateEntered: Optional[str]` - Creation timestamp from `_info` (ISO string)
 
 **Properties:**
 - `board_name: str` - Board name
@@ -1097,6 +1100,8 @@ Dataclass representing a ConnectWise ticket.
 - `is_closed: bool` - Whether ticket is closed
 - `closed_datetime: Optional[datetime]` - Parsed close datetime
 - `required_datetime: Optional[datetime]` - Parsed required datetime
+- `last_updated_datetime: Optional[datetime]` - Parsed last updated datetime
+- `date_entered_datetime: Optional[datetime]` - Parsed creation datetime
 
 **Example:**
 
@@ -1256,6 +1261,41 @@ print(repr(password))  # Output: SecretString('**********')
 
 # Explicit access when needed
 actual = password.get_secret_value()  # "my_secret_password"
+```
+
+### parse_cw_datetime
+
+Parse a ConnectWise API datetime string into a `datetime` object.
+
+```python
+from connectwise.utils import parse_cw_datetime
+
+dt = parse_cw_datetime(value: Optional[str]) -> Optional[datetime]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `value` | `Optional[str]` | Yes | ISO 8601 datetime string from the API (e.g. `"2025-09-05T06:59:47Z"`) |
+
+**Returns:** A timezone-aware `datetime` object, or `None` if `value` is falsy or unparseable.
+
+**Notes:**
+- Handles the trailing `Z` (UTC) used throughout the ConnectWise API.
+- All datetime properties on `Ticket`, `Configuration`, and `Note` delegate to this function — use those properties where possible rather than calling this directly.
+- Use this helper when adding new datetime fields to models instead of inlining `fromisoformat` calls.
+
+**Example:**
+
+```python
+from connectwise.utils import parse_cw_datetime
+
+dt = parse_cw_datetime("2025-09-05T06:59:47Z")
+# datetime(2025, 9, 5, 6, 59, 47, tzinfo=timezone.utc)
+
+parse_cw_datetime(None)   # None
+parse_cw_datetime("")     # None
 ```
 
 ---

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, fields
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+from connectwise.utils import parse_cw_datetime
 
 
 @dataclass
@@ -187,43 +188,19 @@ class Configuration:
 
     @property
     def purchase_datetime(self) -> Optional[datetime]:
-        """Parse purchaseDate as a datetime object."""
-        if not self.purchaseDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.purchaseDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.purchaseDate)
 
     @property
     def installation_datetime(self) -> Optional[datetime]:
-        """Parse installationDate as a datetime object."""
-        if not self.installationDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.installationDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.installationDate)
 
     @property
     def warranty_expiration_datetime(self) -> Optional[datetime]:
-        """Parse warrantyExpirationDate as a datetime object."""
-        if not self.warrantyExpirationDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.warrantyExpirationDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.warrantyExpirationDate)
 
     @property
     def last_backup_datetime(self) -> Optional[datetime]:
-        """Parse lastBackupDate as a datetime object."""
-        if not self.lastBackupDate:
-            return None
-        try:
-            return datetime.fromisoformat(self.lastBackupDate.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+        return parse_cw_datetime(self.lastBackupDate)
 
     def __str__(self) -> str:
         """String representation showing key configuration details."""
