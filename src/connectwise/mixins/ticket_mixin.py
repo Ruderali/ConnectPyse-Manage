@@ -249,15 +249,35 @@ class TicketMixin:
         result = self.post(f"service/tickets/{ticket_id}/notes", payload)
         return Note.from_dict(result)
     
-    def get_ticket_notes(self, ticket_id: int) -> List[Note]:
+    def get_ticket_notes(
+        self,
+        ticket_id: int,
+        conditions: str = "",
+        childconditions: str = "",
+        fields: str = "",
+        pagesize: int = None,
+        orderby: str = ""
+    ) -> List[Note]:
         """
         Get all notes for a ticket.
 
         Args:
             ticket_id: Ticket ID
+            conditions: Optional conditions string for filtering notes
+            childconditions: Optional child conditions string
+            fields: Optional comma-separated fields to include in the response
+            pagesize: Results per page (defaults to 1000)
+            orderby: Optional order by clause
 
         Returns:
             List[Note]: List of notes
         """
-        results = self.get_all(f"service/tickets/{ticket_id}/notes")
+        results = self.get_all(
+            f"service/tickets/{ticket_id}/notes",
+            conditions=conditions,
+            childconditions=childconditions,
+            fields=fields,
+            pagesize=pagesize,
+            orderby=orderby
+        )
         return [Note.from_dict(note) for note in results]
