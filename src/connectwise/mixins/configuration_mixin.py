@@ -47,6 +47,19 @@ class ConfigurationMixin:
         results = self.get_all(f"service/tickets/{ticket_id}/configurations")
         return [Configuration.from_dict(config) for config in results]
     
+    def get_configuration_count(self, conditions: str = "") -> Optional[int]:
+        """
+        Return the total number of configurations matching the given conditions
+        without fetching any configuration data.
+
+        Args:
+            conditions: ConnectWise conditions string for filtering
+
+        Returns:
+            int: Total configuration count, or None if the endpoint was not found
+        """
+        return self.get_count("company/configurations", conditions=conditions)
+
     def get_configuration(self, config_id: int) -> Optional[Configuration]:
         """
         Get details of a specific configuration.

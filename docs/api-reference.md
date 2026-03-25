@@ -6,9 +6,31 @@ Complete API reference for the ConnectWise Manage integration library.
 
 - [Client Setup](#client-setup)
 - [Tickets](#tickets)
+  - [get_ticket](#get_ticket)
+  - [get_tickets](#get_tickets)
+  - [get_ticket_count](#get_ticket_count)
 - [Configurations](#configurations)
+  - [get_configuration_count](#get_configuration_count)
 - [Notes](#notes)
+- [Companies](#companies)
+  - [get_companies](#get_companies)
+  - [get_company](#get_company)
+  - [get_company_count](#get_company_count)
+  - [get_company_statuses](#get_company_statuses)
+- [Boards](#boards)
+  - [get_boards](#get_boards)
+  - [get_board_count](#get_board_count)
+  - [get_board_statuses](#get_board_statuses)
+  - [get_board_types](#get_board_types)
+  - [get_board_subtypes](#get_board_subtypes)
+  - [get_board_items](#get_board_items)
+- [Lookups](#lookups)
+  - [get_priorities](#get_priorities)
+  - [get_sources](#get_sources)
 - [Base HTTP Methods](#base-http-methods)
+  - [get](#get)
+  - [get_all](#get_all)
+  - [get_count](#get_count)
 - [Exceptions](#exceptions)
 - [Models](#models)
 - [Utilities](#utilities)
@@ -30,7 +52,9 @@ client = ConnectWiseClient(
     username: str,
     password: str,
     client_id: str,
-    ticket_defaults: Optional[TicketDefaults] = None
+    ticket_defaults: Optional[TicketDefaults] = None,
+    max_retries: int = 3,
+    retry_backoff_base: int = 2
 )
 ```
 
@@ -44,6 +68,8 @@ client = ConnectWiseClient(
 | `password` | `str` | Yes | API password (automatically wrapped in SecretString) |
 | `client_id` | `str` | Yes | Client ID for API requests |
 | `ticket_defaults` | `TicketDefaults` | No | Optional defaults for ticket creation |
+| `max_retries` | `int` | No | Retries on 429 rate limit responses (default: 3) |
+| `retry_backoff_base` | `int` | No | Base for exponential backoff in seconds (default: 2 → 2s, 4s, 8s) |
 
 **Example:**
 
@@ -127,7 +153,8 @@ Retrieve multiple tickets with optional filtering.
 tickets = client.get_tickets(
     conditions: str = "",
     pagesize: int = 1000,
-    orderby: str = ""
+    orderby: str = "",
+    limit: int = None
 ) -> List[Ticket]
 ```
 
@@ -136,8 +163,9 @@ tickets = client.get_tickets(
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `conditions` | `str` | No | ConnectWise conditions string for filtering |
-| `pagesize` | `int` | No | Results per page (default: 1000) |
-| `orderby` | `str` | No | Order by clause |
+| `pagesize` | `int` | No | Results per page when paginating all records (default: 1000). **Do not use this to cap results** — use `limit` instead. |
+| `orderby` | `str` | No | Order by clause. **Use `id desc` rather than `dateEntered desc`** on large environments — `dateEntered` is not indexed and will cause a server timeout. |
+| `limit` | `int` | No | Cap the number of results. When set, makes a single page request instead of paginating all records. |
 
 **Returns:** List of `Ticket` objects
 
@@ -145,21 +173,57 @@ tickets = client.get_tickets(
 
 ```python
 # Get all open tickets for a company
-tickets = cw.get_tickets(
-    conditions="closedFlag=false AND company/id=250",
-    pagesize=1000
-)
+tickets = cw.get_tickets(conditions="closedFlag=false AND company/id=250")
+
+# Get the 5 most recently created tickets — use id desc, not dateEntered desc
+tickets = cw.get_tickets(orderby="id desc", limit=5)
 
 # Search by summary
-tickets = cw.get_tickets(
-    conditions='summary contains "server offline"',
-    orderby="id desc"
-)
+tickets = cw.get_tickets(conditions='summary contains "server offline"')
 
 print(f"Found {len(tickets)} tickets")
 for ticket in tickets:
     print(f"#{ticket.id}: {ticket.summary}")
 ```
+
+### get_ticket_count
+
+Return the total number of tickets matching the given conditions without fetching any ticket data. Use this to check volumes before committing to a potentially expensive `get_tickets` call.
+
+```python
+count = client.get_ticket_count(
+    conditions: str = ""
+) -> Optional[int]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+
+**Returns:** `int` total count, or `None` if the endpoint was not found
+
+**Example:**
+
+```python
+from datetime import datetime, timezone, timedelta
+
+seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+date_str = seven_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+conditions = f'board/name="Events" AND dateEntered>=[{date_str}]'
+
+# Check volume first — no records fetched
+count = cw.get_ticket_count(conditions=conditions)
+print(f"{count} tickets in the last 7 days")
+
+if count > 500:
+    print("Too many to fetch at once — consider narrowing your conditions")
+else:
+    tickets = cw.get_tickets(conditions=conditions)
+```
+
+---
 
 ### create_ticket
 
@@ -735,6 +799,34 @@ if success:
     print("Configuration deleted")
 ```
 
+### get_configuration_count
+
+Return the total number of configurations matching the given conditions without fetching any configuration data.
+
+```python
+count = client.get_configuration_count(
+    conditions: str = ""
+) -> Optional[int]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+
+**Returns:** `int` total count, or `None` if the endpoint was not found
+
+**Example:**
+
+```python
+total = cw.get_configuration_count()
+company_total = cw.get_configuration_count(conditions="company/id=250")
+print(f"{company_total} configs for company 250 (out of {total} total)")
+```
+
+---
+
 ### get_configuration_type_questions
 
 Get the custom question definitions for a configuration type. Useful for resolving question names to IDs.
@@ -773,6 +865,298 @@ for q in questions:
 ## Notes
 
 See [add_ticket_note](#add_ticket_note) and [get_ticket_notes](#get_ticket_notes) in the Tickets section.
+
+---
+
+## Companies
+
+### get_companies
+
+Retrieve companies with optional filtering, ordering, and result cap.
+
+```python
+companies = client.get_companies(
+    conditions: str = "",
+    orderby: str = "",
+    limit: int = None
+) -> List[Company]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+| `orderby` | `str` | No | Order by clause (e.g., `"id desc"`) |
+| `limit` | `int` | No | Cap the number of results. When set, makes a single page request instead of paginating all records. |
+
+**Returns:** List of `Company` objects
+
+**Example:**
+
+```python
+# Get all active companies
+companies = cw.get_companies(conditions="deletedFlag=false")
+
+# Get the 3 most recently added companies
+recent = cw.get_companies(orderby="id desc", limit=3)
+
+for c in companies:
+    print(f"{c}  status={c.status_name}  territory={c.territory_name}")
+```
+
+---
+
+### get_company
+
+Get a specific company by ID.
+
+```python
+company = client.get_company(company_id: int) -> Optional[Company]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `company_id` | `int` | Yes | Company ID to retrieve |
+
+**Returns:** `Company` object or `None` if not found
+
+**Example:**
+
+```python
+company = cw.get_company(company_id=250)
+if company:
+    print(f"{company.name} — {company.status_name}")
+```
+
+---
+
+### get_company_count
+
+Return the total number of companies matching the given conditions without fetching any company data.
+
+```python
+count = client.get_company_count(conditions: str = "") -> Optional[int]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+
+**Returns:** `int` total count, or `None` if the endpoint was not found
+
+**Example:**
+
+```python
+total = cw.get_company_count()
+deleted = cw.get_company_count(conditions="deletedFlag=true")
+print(f"{total} companies ({deleted} deleted)")
+```
+
+---
+
+### get_company_statuses
+
+Get all company statuses.
+
+```python
+statuses = client.get_company_statuses() -> List[CompanyStatus]
+```
+
+**Returns:** List of `CompanyStatus` objects
+
+**Example:**
+
+```python
+for s in cw.get_company_statuses():
+    print(f"{s}  default={s.defaultFlag}")
+```
+
+---
+
+## Boards
+
+### get_boards
+
+Get all service boards.
+
+```python
+boards = client.get_boards(active_only: bool = True) -> List[Board]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `active_only` | `bool` | No | Only return active (non-inactive) boards (default: `True`) |
+
+**Returns:** List of `Board` objects
+
+**Example:**
+
+```python
+boards = cw.get_boards()
+for b in boards:
+    print(f"{b}")
+```
+
+---
+
+### get_board_count
+
+Return the total number of service boards without fetching board data.
+
+```python
+count = client.get_board_count(conditions: str = "") -> Optional[int]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+
+**Returns:** `int` total count, or `None` if the endpoint was not found
+
+**Example:**
+
+```python
+active = cw.get_board_count(conditions="inactive=false")
+total = cw.get_board_count()
+print(f"{active} active boards out of {total}")
+```
+
+---
+
+### get_board_statuses
+
+Get all statuses for a specific board.
+
+```python
+statuses = client.get_board_statuses(board_id: int) -> List[BoardStatus]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `int` | Yes | Board ID |
+
+**Returns:** List of `BoardStatus` objects
+
+**Example:**
+
+```python
+for s in cw.get_board_statuses(board_id=1):
+    print(f"{s}  closed={s.closedStatus}  default={s.defaultFlag}")
+```
+
+---
+
+### get_board_types
+
+Get all types for a specific board.
+
+```python
+types = client.get_board_types(board_id: int) -> List[BoardType]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `int` | Yes | Board ID |
+
+**Returns:** List of `BoardType` objects
+
+**Example:**
+
+```python
+for t in cw.get_board_types(board_id=1):
+    print(f"{t}")
+```
+
+---
+
+### get_board_subtypes
+
+Get all subtypes for a specific board.
+
+```python
+subtypes = client.get_board_subtypes(board_id: int) -> List[BoardSubtype]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `int` | Yes | Board ID |
+
+**Returns:** List of `BoardSubtype` objects
+
+---
+
+### get_board_items
+
+Get all items for a specific board.
+
+```python
+items = client.get_board_items(board_id: int) -> List[BoardItem]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `board_id` | `int` | Yes | Board ID |
+
+**Returns:** List of `BoardItem` objects
+
+---
+
+## Lookups
+
+General service reference data (priorities, sources).
+
+### get_priorities
+
+Get all ticket priorities.
+
+```python
+priorities = client.get_priorities() -> List[Priority]
+```
+
+**Returns:** List of `Priority` objects
+
+**Example:**
+
+```python
+for p in cw.get_priorities():
+    print(f"{p}  sortOrder={p.sortOrder}  default={p.defaultFlag}")
+```
+
+---
+
+### get_sources
+
+Get all ticket sources.
+
+```python
+sources = client.get_sources() -> List[Source]
+```
+
+**Returns:** List of `Source` objects
+
+**Example:**
+
+```python
+for s in cw.get_sources():
+    print(f"{s}  default={s.defaultFlag}")
+```
 
 ---
 
@@ -856,6 +1240,47 @@ tickets = cw.get_all(
     pagesize=1000
 )
 ```
+
+### get_count
+
+Return the total record count for any endpoint without fetching any records. This calls the `{endpoint}/count` API path directly.
+
+```python
+count = client.get_count(
+    endpoint: str,
+    conditions: str = "",
+    childconditions: str = ""
+) -> Optional[int]
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `endpoint` | `str` | Yes | API endpoint (e.g., `"service/tickets"`) |
+| `conditions` | `str` | No | ConnectWise conditions string for filtering |
+| `childconditions` | `str` | No | Child conditions string for filtering |
+
+**Returns:** `int` total count, or `None` if the endpoint was not found (404)
+
+**Example:**
+
+```python
+# Count tickets on a board
+count = cw.get_count(
+    "service/tickets",
+    conditions='board/name="Service Desk" AND closedFlag=false'
+)
+print(f"{count} open tickets")
+
+# Count configurations for a company
+config_count = cw.get_count(
+    "company/configurations",
+    conditions="company/id=250"
+)
+```
+
+---
 
 ### post
 
@@ -1208,6 +1633,125 @@ print(f"Location: {config.location}")
 print(f"Active: {config.is_active}")
 ```
 
+### Company
+
+Dataclass representing a ConnectWise company.
+
+**Key Attributes:**
+- `id: int` - Company ID
+- `name: str` - Company name
+- `identifier: Optional[str]` - Short identifier
+- `status: Optional[dict]` - Status dict
+- `territory: Optional[dict]` - Territory dict
+- `market: Optional[dict]` - Market dict
+- `deletedFlag: bool` - Whether deleted
+
+**Properties:**
+- `status_name: str` - Status name
+- `territory_name: str` - Territory name
+- `market_name: str` - Market name
+
+---
+
+### CompanyStatus
+
+Dataclass representing a ConnectWise company status.
+
+**Attributes:**
+- `id: int` - Status ID
+- `name: str` - Status name
+- `defaultFlag: bool` - Whether this is the default status
+- `inactiveFlag: bool` - Whether inactive
+- `notificationFlag: bool` - Whether notifications are enabled
+
+---
+
+### Board
+
+Dataclass representing a ConnectWise service board.
+
+**Attributes:**
+- `id: int` - Board ID
+- `name: str` - Board name
+- `inactive: bool` - Whether inactive
+- `projectFlag: bool` - Whether a project board
+
+---
+
+### BoardStatus
+
+Dataclass representing a status on a service board.
+
+**Attributes:**
+- `id: int` - Status ID
+- `name: str` - Status name
+- `boardId: Optional[int]` - Parent board ID
+- `closedStatus: bool` - Whether this status represents a closed ticket
+- `defaultFlag: bool` - Whether this is the default status
+
+---
+
+### BoardType
+
+Dataclass representing a type on a service board.
+
+**Attributes:**
+- `id: int` - Type ID
+- `name: str` - Type name
+- `boardId: Optional[int]` - Parent board ID
+- `inactive: bool` - Whether inactive
+
+---
+
+### BoardSubtype
+
+Dataclass representing a subtype on a service board.
+
+**Attributes:**
+- `id: int` - Subtype ID
+- `name: str` - Subtype name
+- `boardId: Optional[int]` - Parent board ID
+- `inactive: bool` - Whether inactive
+
+---
+
+### BoardItem
+
+Dataclass representing an item on a service board.
+
+**Attributes:**
+- `id: int` - Item ID
+- `name: str` - Item name
+- `boardId: Optional[int]` - Parent board ID
+- `inactive: bool` - Whether inactive
+
+---
+
+### Priority
+
+Dataclass representing a ConnectWise ticket priority.
+
+**Attributes:**
+- `id: int` - Priority ID
+- `name: str` - Priority name
+- `sortOrder: Optional[int]` - Sort order
+- `defaultFlag: bool` - Whether this is the default priority
+- `imageLink: Optional[str]` - URL to priority icon
+
+---
+
+### Source
+
+Dataclass representing a ConnectWise ticket source.
+
+**Attributes:**
+- `id: int` - Source ID
+- `name: str` - Source name
+- `defaultFlag: bool` - Whether this is the default source
+- `enteredByFlag: bool` - Whether restricted to entered-by usage
+
+---
+
 ### Note
 
 Dataclass representing a ticket note.
@@ -1364,10 +1908,22 @@ conditions = "(closedFlag=false AND priority/id>=8) OR summary contains 'urgent'
    result = cw.get("service/tickets", fields="id,summary,status")
    ```
 
-3. **Use pagesize wisely**:
+3. **Use `limit` to cap results, not `pagesize`**:
    ```python
-   # Reasonable page size
-   tickets = cw.get_tickets(conditions="...", pagesize=1000)
+   # ❌ Wrong — pagesize controls internal pagination, not result count
+   tickets = cw.get_tickets(pagesize=5)
+
+   # ✅ Correct — limit makes a single request and returns at most 5
+   tickets = cw.get_tickets(orderby="id desc", limit=5)
+   ```
+
+4. **Order by `id` not `dateEntered` on large datasets**:
+   ```python
+   # ❌ Slow — dateEntered is in _info and not indexed; will timeout on large envs
+   tickets = cw.get_tickets(orderby="dateEntered desc", limit=5)
+
+   # ✅ Fast — id is the primary key and always indexed
+   tickets = cw.get_tickets(orderby="id desc", limit=5)
    ```
 
 4. **Handle rate limits**:

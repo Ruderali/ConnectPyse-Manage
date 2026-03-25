@@ -89,23 +89,45 @@ class TicketMixin:
         self,
         conditions: str = "",
         pagesize: int = 1000,
-        orderby: str = ""
+        orderby: str = "",
+        limit: int = None
     ) -> List[Ticket]:
         """
         Get multiple tickets with optional filtering.
 
         Args:
             conditions: ConnectWise conditions string for filtering
-            pagesize: Results per page
+            pagesize: Results per page (used when paginating all records)
             orderby: Order by clause
+            limit: Cap the number of results returned. If set, makes a single
+                   page request instead of paginating through all records.
 
         Returns:
             List[Ticket]: List of tickets
         """
-        results = self.get_all("service/tickets", conditions=conditions,
-                              pagesize=pagesize, orderby=orderby)
+        if limit is not None:
+            results = self.get("service/tickets", conditions=conditions,
+                               orderby=orderby, pagesize=limit) or []
+            if not isinstance(results, list):
+                results = [results]
+        else:
+            results = self.get_all("service/tickets", conditions=conditions,
+                                   pagesize=pagesize, orderby=orderby)
         return [Ticket.from_dict(ticket) for ticket in results]
     
+    def get_ticket_count(self, conditions: str = "") -> Optional[int]:
+        """
+        Return the total number of tickets matching the given conditions
+        without fetching any ticket data.
+
+        Args:
+            conditions: ConnectWise conditions string for filtering
+
+        Returns:
+            int: Total ticket count, or None if the endpoint was not found
+        """
+        return self.get_count("service/tickets", conditions=conditions)
+
     def update_ticket_status(self, ticket_id: int, status_id: int) -> Optional[Ticket]:
         """
         Update the status of a ticket in ConnectWise.
