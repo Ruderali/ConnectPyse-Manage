@@ -249,9 +249,44 @@ if configs:
     print(f"View ticket: {ticket_url}")
 ```
 
+## Rate Limiting
+
+The client automatically retries requests that receive a `429 Too Many Requests` response, using exponential backoff and honoring the `Retry-After` header when ConnectWise includes one.
+
+```python
+cw = ConnectWiseClient(
+    base_url="https://connect.example.com",
+    client="YourCompany",
+    username="api_user",
+    password="api_password",
+    client_id="your-client-id-uuid",
+    max_retries=3,        # retries per request (default: 3)
+    retry_backoff_base=2  # backoff in seconds: 2s, 4s, 8s (default: 2)
+)
+```
+
+If all retries are exhausted, a `ConnectWiseRateLimitError` is raised. To avoid hitting rate limits in the first place, check record counts before fetching large result sets — see [Performance Tips](#performance-tips).
+
 ## Performance Tips
 
-1. **Use specific conditions** to limit results:
+1. **Check the count before fetching** to avoid heavy queries:
+   ```python
+   from datetime import datetime, timezone, timedelta
+
+   seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+   date_str = seven_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ")
+   conditions = f'board/name="Events" AND dateEntered>=[{date_str}]'
+
+   # Single lightweight request — no records fetched
+   count = cw.get_ticket_count(conditions=conditions)
+   print(f"{count} tickets")
+
+   # Only fetch if the volume is manageable
+   if count <= 500:
+       tickets = cw.get_tickets(conditions=conditions)
+   ```
+
+2. **Use specific conditions** to limit results:
    ```python
    # ❌ Slow - fetches everything
    tickets = cw.get_tickets()
@@ -260,21 +295,9 @@ if configs:
    tickets = cw.get_tickets(conditions="company/id=250 AND closedFlag=false")
    ```
 
-2. **Leverage the fields parameter** for partial data:
+3. **Leverage the fields parameter** for partial data:
    ```python
    result = cw.get("service/tickets", fields="id,summary,status")
-   ```
-
-3. **Handle rate limits gracefully**:
-   ```python
-   import time
-
-   try:
-       tickets = cw.get_tickets(conditions="...")
-   except ConnectWiseRateLimitError as e:
-       if e.retry_after:
-           time.sleep(e.retry_after)
-           tickets = cw.get_tickets(conditions="...")
    ```
 
 ## Credential Security

@@ -1,9 +1,14 @@
 import base64
+import logging
+import time
 import requests
 from typing import Optional
 
 from .mixins.ticket_mixin import TicketMixin
 from .mixins.configuration_mixin import ConfigurationMixin
+from .mixins.companies_mixin import CompaniesMixin
+from .mixins.boards_mixin import BoardsMixin
+from .mixins.lookup_mixin import LookupMixin
 from .utils import SecretString
 from .defaults import TicketDefaults
 from .exceptions import (
@@ -16,8 +21,10 @@ from .exceptions import (
     ConnectWiseConfigurationError
 )
 
+logger = logging.getLogger(__name__)
 
-class ConnectWiseClient(TicketMixin, ConfigurationMixin):
+
+class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsMixin, LookupMixin):
     """ConnectWise API Client with modular functionality via mixins."""
     
     def __init__(
@@ -27,7 +34,9 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
         username: str,
         password: str,
         client_id: str,
-        ticket_defaults: Optional[TicketDefaults] = None
+        ticket_defaults: Optional[TicketDefaults] = None,
+        max_retries: int = 3,
+        retry_backoff_base: int = 2,
     ):
         """
         Initialize ConnectWise client with credentials and optional defaults.
@@ -39,6 +48,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
             password: API password
             client_id: Client ID for API requests
             ticket_defaults: Optional TicketDefaults object for ticket creation defaults
+            max_retries: Number of retries on 429 rate limit responses (default: 3)
+            retry_backoff_base: Base for exponential backoff in seconds (default: 2 → 2s, 4s, 8s)
         """
         # Validate required parameters
         if not base_url:
@@ -76,6 +87,10 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
 
         # Store ticket defaults
         self.ticket_defaults = ticket_defaults or TicketDefaults()
+
+        # Retry configuration
+        self.max_retries = max_retries
+        self.retry_backoff_base = retry_backoff_base
 
         # Build the auth header
         self._auth_token = self._get_auth()
@@ -214,19 +229,62 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
         if page:
             params["page"] = page
 
-        # Send request
-        response = requests.get(url, headers=headers, params=params)
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = requests.get(url, headers=headers, params=params)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < self.max_retries:
+                    wait = self.retry_backoff_base ** attempt
+                    logger.warning(f"Connection error on GET {endpoint}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    time.sleep(wait)
+                    continue
+                raise ConnectWiseAPIError(f"Connection failed for {endpoint}: {e}")
 
-        # Handle 404s by returning None (expected case for missing resources)
-        if response.status_code == 404:
-            return None
+            # Handle 404s by returning None (expected case for missing resources)
+            if response.status_code == 404:
+                return None
 
-        # Handle other errors
-        if not response.ok:
-            self._handle_response_error(response)
+            if response.status_code == 429 and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after else self.retry_backoff_base ** attempt
+                logger.warning(f"Rate limited on GET {endpoint}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})")
+                time.sleep(wait)
+                continue
 
-        return response.json()
+            # Handle other errors
+            if not response.ok:
+                self._handle_response_error(response)
+
+            return response.json()
     
+    def get_count(self, endpoint: str, conditions: str = "",
+                  childconditions: str = "") -> Optional[int]:
+        """
+        Return the total record count for an endpoint without fetching any records.
+
+        Args:
+            endpoint: The API endpoint (e.g., "service/tickets")
+            conditions: ConnectWise conditions string for filtering
+            childconditions: Child conditions string for filtering
+
+        Returns:
+            int: Total record count, or None if the endpoint was not found (404)
+
+        Raises:
+            ConnectWiseAPIError: For API errors
+        """
+        result = self.get(
+            f"{endpoint}/count",
+            conditions=conditions if conditions else None,
+            childconditions=childconditions if childconditions else None
+        )
+        if result is None:
+            return None
+        try:
+            return int(result.get("count", 0))
+        except (AttributeError, ValueError, TypeError):
+            return 0
+
     def get_all(self, endpoint: str, conditions: str = "", childconditions: str = "",
                 fields: str = "", pagesize: int = None, orderby: str = "") -> list:
         """
@@ -239,20 +297,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
         Raises:
             ConnectWiseAPIError: For API errors
         """
-        # Get the total count first
-        ct = self.get(
-            f"{endpoint}/count",
-            conditions=conditions if conditions else None,
-            childconditions=childconditions if childconditions else None
-        )
-
-        # If count endpoint returns None (404), return empty list
-        if ct is None:
-            return []
-
-        try:
-            count = int(ct.get("count", 0))
-        except (AttributeError, ValueError, TypeError):
+        count = self.get_count(endpoint, conditions=conditions, childconditions=childconditions)
+        if count is None:
             return []
 
         if pagesize is None:
@@ -309,18 +355,33 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
             "Content-Type": "application/json"
         }
 
-        # Send request with operations as JSON array
-        response = requests.patch(url, headers=headers, json=operations)
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = requests.patch(url, headers=headers, json=operations)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < self.max_retries:
+                    wait = self.retry_backoff_base ** attempt
+                    logger.warning(f"Connection error on PATCH {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    time.sleep(wait)
+                    continue
+                raise ConnectWiseAPIError(f"Connection failed for {endpoint}/{record_id}: {e}")
 
-        # Handle 404s by returning None
-        if response.status_code == 404:
-            return None
+            # Handle 404s by returning None
+            if response.status_code == 404:
+                return None
 
-        # Handle other errors
-        if not response.ok:
-            self._handle_response_error(response)
+            if response.status_code == 429 and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after else self.retry_backoff_base ** attempt
+                logger.warning(f"Rate limited on PATCH {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})")
+                time.sleep(wait)
+                continue
 
-        return response.json()
+            # Handle other errors
+            if not response.ok:
+                self._handle_response_error(response)
+
+            return response.json()
     
     def post(self, endpoint: str, data: dict) -> dict:
         """
@@ -343,13 +404,29 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
             "Content-Type": "application/json"
         }
 
-        response = requests.post(url, headers=headers, json=data)
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = requests.post(url, headers=headers, json=data)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < self.max_retries:
+                    wait = self.retry_backoff_base ** attempt
+                    logger.warning(f"Connection error on POST {endpoint}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    time.sleep(wait)
+                    continue
+                raise ConnectWiseAPIError(f"Connection failed for {endpoint}: {e}")
 
-        # Handle errors
-        if not response.ok:
-            self._handle_response_error(response)
+            if response.status_code == 429 and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after else self.retry_backoff_base ** attempt
+                logger.warning(f"Rate limited on POST {endpoint}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})")
+                time.sleep(wait)
+                continue
 
-        return response.json()
+            # Handle errors
+            if not response.ok:
+                self._handle_response_error(response)
+
+            return response.json()
 
     def put(self, endpoint: str, record_id: int, data: dict) -> Optional[dict]:
         """
@@ -373,17 +450,33 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
             "Content-Type": "application/json"
         }
 
-        response = requests.put(url, headers=headers, json=data)
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = requests.put(url, headers=headers, json=data)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < self.max_retries:
+                    wait = self.retry_backoff_base ** attempt
+                    logger.warning(f"Connection error on PUT {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    time.sleep(wait)
+                    continue
+                raise ConnectWiseAPIError(f"Connection failed for {endpoint}/{record_id}: {e}")
 
-        # Handle 404s by returning None
-        if response.status_code == 404:
-            return None
+            # Handle 404s by returning None
+            if response.status_code == 404:
+                return None
 
-        # Handle other errors
-        if not response.ok:
-            self._handle_response_error(response)
+            if response.status_code == 429 and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after else self.retry_backoff_base ** attempt
+                logger.warning(f"Rate limited on PUT {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})")
+                time.sleep(wait)
+                continue
 
-        return response.json()
+            # Handle other errors
+            if not response.ok:
+                self._handle_response_error(response)
+
+            return response.json()
 
     def delete(self, endpoint: str, record_id: int) -> bool:
         """
@@ -405,15 +498,23 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin):
             "clientId": self.client_id
         }
 
-        response = requests.delete(url, headers=headers)
+        for attempt in range(self.max_retries + 1):
+            response = requests.delete(url, headers=headers)
 
-        # Handle 404s by returning False
-        if response.status_code == 404:
-            return False
+            # Handle 404s by returning False
+            if response.status_code == 404:
+                return False
 
-        # Handle other errors
-        if not response.ok:
-            self._handle_response_error(response)
+            if response.status_code == 429 and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after else self.retry_backoff_base ** attempt
+                logger.warning(f"Rate limited on DELETE {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries})")
+                time.sleep(wait)
+                continue
 
-        # DELETE typically returns 204 No Content on success
-        return response.status_code == 204 or response.ok
+            # Handle other errors
+            if not response.ok:
+                self._handle_response_error(response)
+
+            # DELETE typically returns 204 No Content on success
+            return response.status_code == 204 or response.ok
