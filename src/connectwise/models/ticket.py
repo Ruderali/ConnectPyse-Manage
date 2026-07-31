@@ -102,6 +102,16 @@ class Ticket:
     def owner_name(self) -> Optional[str]:
         """Get owner name from nested dict."""
         return self.owner.get("name") if self.owner else None
+
+    @property
+    def owner_id(self) -> Optional[int]:
+        """Get owner member ID from nested dict."""
+        return self.owner.get("id") if self.owner else None
+
+    @property
+    def owner_identifier(self) -> Optional[str]:
+        """Get owner login identifier (username) from nested dict."""
+        return self.owner.get("identifier") if self.owner else None
     
     @property
     def contact_name(self) -> Optional[str]:
