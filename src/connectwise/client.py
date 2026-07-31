@@ -9,6 +9,14 @@ from .mixins.configuration_mixin import ConfigurationMixin
 from .mixins.companies_mixin import CompaniesMixin
 from .mixins.boards_mixin import BoardsMixin
 from .mixins.lookup_mixin import LookupMixin
+from .mixins.agreements_mixin import AgreementsMixin
+from .mixins.invoices_mixin import InvoicesMixin
+from .mixins.time_mixin import TimeMixin
+from .mixins.members_mixin import MembersMixin
+from .mixins.contacts_mixin import ContactsMixin
+from .mixins.projects_mixin import ProjectsMixin
+from .mixins.opportunities_mixin import OpportunitiesMixin
+from .mixins.schedule_mixin import ScheduleMixin
 from .utils import SecretString
 from .defaults import TicketDefaults
 from .exceptions import (
@@ -24,7 +32,12 @@ from .exceptions import (
 logger = logging.getLogger(__name__)
 
 
-class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsMixin, LookupMixin):
+class ConnectWiseClient(
+    TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsMixin, LookupMixin,
+    AgreementsMixin, InvoicesMixin,
+    TimeMixin, MembersMixin, ContactsMixin,
+    ProjectsMixin, OpportunitiesMixin, ScheduleMixin,
+):
     """ConnectWise API Client with modular functionality via mixins."""
     
     def __init__(
@@ -98,13 +111,34 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
     # ========================================================================
     # AUTHENTICATION
     # ========================================================================
-    
+
     def _get_auth(self) -> str:
-        """Builds the Basic Auth header value."""
-        credentials = f"{self.client}+{self.username}:{self._password.get_secret_value()}"
+        """Builds the Basic Auth header value for the primary credential."""
+        return self.compute_auth(self.username, self._password.get_secret_value())
+
+    def compute_auth(self, identifier: str, secret: str) -> str:
+        """
+        Build a Basic Auth header value for any credential pair.
+
+        Used internally for the primary credential, and publicly by callers
+        who want to precompute a token for a different member (e.g. via
+        run_as) and reuse it across multiple calls.
+
+        Note: ConnectWise's API key model maps the public key to the
+        "identifier"/username slot and the private key to the "secret"/
+        password slot — same wire format, different semantic meaning.
+
+        Args:
+            identifier: Username, or API public key
+            secret: Password, or API private key
+
+        Returns:
+            str: A "Basic <base64>" auth header value
+        """
+        credentials = f"{self.client}+{identifier}:{secret}"
         token = base64.b64encode(credentials.encode()).decode()
         return f"Basic {token}"
-    
+
     # ========================================================================
     # URL HELPERS
     # ========================================================================
@@ -197,7 +231,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
     
     def get(self, endpoint: str, conditions: str = "", childconditions: str = "",
             fields: str = "", pagesize: int = None, page: int = None,
-            orderby: str = "") -> Optional[dict]:
+            orderby: str = "", run_as: str = None) -> Optional[dict]:
         """
         Perform a single GET request to the ConnectWise API.
         This method handles single requests without pagination.
@@ -210,9 +244,10 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         """
         url = f"{self.get_api_url()}/{endpoint}"
         headers = {
-            "Authorization": self._auth_token,
+            "Authorization": run_as or self._auth_token,
             "clientId": self.client_id
         }
+
 
         # Build query params
         params = {}
@@ -258,7 +293,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
             return response.json()
     
     def get_count(self, endpoint: str, conditions: str = "",
-                  childconditions: str = "") -> Optional[int]:
+                  childconditions: str = "", run_as: str = None) -> Optional[int]:
         """
         Return the total record count for an endpoint without fetching any records.
 
@@ -276,7 +311,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         result = self.get(
             f"{endpoint}/count",
             conditions=conditions if conditions else None,
-            childconditions=childconditions if childconditions else None
+            childconditions=childconditions if childconditions else None,
+            run_as=run_as
         )
         if result is None:
             return None
@@ -286,7 +322,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
             return 0
 
     def get_all(self, endpoint: str, conditions: str = "", childconditions: str = "",
-                fields: str = "", pagesize: int = None, orderby: str = "") -> list:
+                fields: str = "", pagesize: int = None, orderby: str = "", run_as: str = None) -> list:
         """
         Perform paginated GET requests to retrieve all records from the ConnectWise API.
         This method automatically handles pagination and returns all results as a list.
@@ -297,7 +333,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         Raises:
             ConnectWiseAPIError: For API errors
         """
-        count = self.get_count(endpoint, conditions=conditions, childconditions=childconditions)
+        count = self.get_count(endpoint, conditions=conditions, childconditions=childconditions, run_as=run_as)
         if count is None:
             return []
 
@@ -315,7 +351,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
                 fields=fields,
                 pagesize=pagesize,
                 page=page,
-                orderby=orderby
+                orderby=orderby,
+                run_as=run_as
             )
 
             # If a page returns None, stop pagination
@@ -330,7 +367,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
 
         return responses
     
-    def patch(self, endpoint: str, record_id: int, operations: list) -> Optional[dict]:
+    def patch(self, endpoint: str, record_id: int, operations: list,
+              run_as: Optional[str] = None) -> Optional[dict]:
         """
         Perform a PATCH request to update specific fields on a ConnectWise API entity.
 
@@ -350,7 +388,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         """
         url = f"{self.get_api_url()}/{endpoint}/{record_id}"
         headers = {
-            "Authorization": self._auth_token,
+            "Authorization": run_as or self._auth_token,
             "clientId": self.client_id,
             "Content-Type": "application/json"
         }
@@ -383,7 +421,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
 
             return response.json()
     
-    def post(self, endpoint: str, data: dict) -> dict:
+    def post(self, endpoint: str, data: dict, run_as: Optional[str] = None) -> dict:
         """
         Perform a POST request to create a new record in the ConnectWise API.
 
@@ -399,7 +437,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         """
         url = f"{self.get_api_url()}/{endpoint}"
         headers = {
-            "Authorization": self._auth_token,
+            "Authorization": run_as or self._auth_token,
             "clientId": self.client_id,
             "Content-Type": "application/json"
         }
@@ -428,7 +466,8 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
 
             return response.json()
 
-    def put(self, endpoint: str, record_id: int, data: dict) -> Optional[dict]:
+    def put(self, endpoint: str, record_id: int, data: dict,
+            run_as: Optional[str] = None) -> Optional[dict]:
         """
         Perform a PUT request to replace/update a record in the ConnectWise API.
 
@@ -445,7 +484,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         """
         url = f"{self.get_api_url()}/{endpoint}/{record_id}"
         headers = {
-            "Authorization": self._auth_token,
+            "Authorization": run_as or self._auth_token,
             "clientId": self.client_id,
             "Content-Type": "application/json"
         }
@@ -478,7 +517,7 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
 
             return response.json()
 
-    def delete(self, endpoint: str, record_id: int) -> bool:
+    def delete(self, endpoint: str, record_id: int, run_as: Optional[str] = None) -> bool:
         """
         Perform a DELETE request to remove a record from the ConnectWise API.
 
@@ -494,12 +533,20 @@ class ConnectWiseClient(TicketMixin, ConfigurationMixin, CompaniesMixin, BoardsM
         """
         url = f"{self.get_api_url()}/{endpoint}/{record_id}"
         headers = {
-            "Authorization": self._auth_token,
+            "Authorization": run_as or self._auth_token,
             "clientId": self.client_id
         }
 
         for attempt in range(self.max_retries + 1):
-            response = requests.delete(url, headers=headers)
+            try:
+                response = requests.delete(url, headers=headers)
+            except (requests.ConnectionError, requests.Timeout) as e:
+                if attempt < self.max_retries:
+                    wait = self.retry_backoff_base ** attempt
+                    logger.warning(f"Connection error on DELETE {endpoint}/{record_id}, retrying in {wait}s (attempt {attempt + 1}/{self.max_retries}): {e}")
+                    time.sleep(wait)
+                    continue
+                raise ConnectWiseAPIError(f"Connection failed for {endpoint}/{record_id}: {e}")
 
             # Handle 404s by returning False
             if response.status_code == 404:

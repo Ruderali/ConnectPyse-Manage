@@ -7,11 +7,12 @@ This guide helps AI agents (like Claude, GPT, etc.) understand how to use the Co
 ### What This Integration Does
 
 This is a Python wrapper for the ConnectWise Manage API that:
-- Provides typed dataclasses for Tickets, Configurations, and Notes
+- Provides typed dataclasses for Tickets, Configurations, Notes, Companies, Boards, Agreements, AgreementAdditions, TimeEntries, Members, Contacts, Invoices, Projects, ProjectPhases, Opportunities, and ScheduleEntries
 - Handles authentication and error handling automatically
 - Returns proper exceptions instead of error dicts
 - Supports all standard HTTP methods (GET, POST, PATCH, PUT, DELETE)
 - Protects credentials from accidental logging
+- Automatically retries on rate limit (429) responses with exponential backoff
 
 ### Basic Usage Pattern
 
@@ -141,6 +142,64 @@ for note in notes:
     if note.is_internal:
         print(f"Internal: {note.text}")
 ```
+
+### Getting Related Objects from a Ticket
+
+Tickets have helper methods to hydrate related objects without manual lookups:
+
+```python
+ticket = cw.get_ticket(ticket_id=12345)
+
+# Get the full Contact assigned to the ticket
+contact = cw.get_ticket_contact(ticket_id=12345)
+if contact:
+    print(contact.full_name, contact.primary_email)
+
+# Get all time entries on a ticket
+entries = cw.get_ticket_time_entries(ticket_id=12345)
+total_hours = sum(e.actualHours or 0 for e in entries)
+
+# Get the ticket URL for linking in notifications etc.
+url = cw.get_ticket_url(ticket_id=12345)
+```
+
+### Finding Who Is Assigned to a Ticket
+
+`ticket.owner` is the primary owner (single dict). For all dispatched resources use `get_ticket_schedule`:
+
+```python
+ticket = cw.get_ticket(ticket_id=12345)
+
+# Primary owner — stored as a dict, use properties
+print(ticket.owner_name)       # name string
+print(ticket.owner_identifier) # login username
+
+# Hydrate to a full Member object when you need the rest of their profile
+member = cw.get_member(ticket.owner_id)
+
+# All dispatched resources (the dispatch board view)
+schedule = cw.get_ticket_schedule(ticket_id=12345)
+for entry in schedule:
+    print(entry.member_name, entry.date_start_datetime)
+```
+
+> **Note:** There is no `service/tickets/{id}/members` or `service/tickets/{id}/resources` endpoint in ConnectWise. Dispatched resource assignments live exclusively in schedule entries.
+
+### Checking Volume Before a Large Fetch
+
+Use count methods to avoid accidentally pulling tens of thousands of records:
+
+```python
+count = cw.get_ticket_count(conditions='board/name="Service Desk" AND closedFlag=false')
+print(f"{count} open tickets")
+
+if count > 500:
+    print("Consider narrowing conditions")
+else:
+    tickets = cw.get_tickets(conditions=...)
+```
+
+Count methods exist for every domain: `get_ticket_count`, `get_agreement_count`, `get_invoice_count`, etc.
 
 ### Using Ticket Defaults
 
@@ -317,6 +376,32 @@ cw = ConnectWiseClient(
 )
 ```
 
+### ❌ Don't: Use `dateEntered` in `orderby` on Large Environments
+
+`dateEntered` is not an indexed field — ordering by it on environments with large ticket volumes will cause a server timeout.
+
+```python
+# ❌ Wrong - causes timeout on large environments
+tickets = cw.get_tickets(orderby="dateEntered desc", limit=10)
+
+# ✅ Right - id is indexed and monotonically increasing
+tickets = cw.get_tickets(orderby="id desc", limit=10)
+```
+
+### ❌ Don't: Filter Open Opportunities with `closedFlag`
+
+The opportunity object doesn't have a `closedFlag` field. Use `closedDate=null` instead.
+
+```python
+# ❌ Wrong - returns 400 Bad Request
+opps = cw.get_opportunities(conditions="closedFlag=false")
+
+# ✅ Right
+opps = cw.get_open_opportunities()  # pre-filters closedDate=null
+# or manually:
+opps = cw.get_opportunities(conditions="closedDate=null")
+```
+
 ### ❌ Don't: Catch 404s as Exceptions for Get Operations
 
 ```python
@@ -334,13 +419,7 @@ if ticket is None:
 
 ## API Endpoint Structure
 
-ConnectWise uses this endpoint pattern:
-- Tickets: `service/tickets`
-- Configurations: `company/configurations`
-- Notes: `service/tickets/{id}/notes`
-- Companies: `company/companies`
-
-Base HTTP methods follow this pattern:
+For a full list of endpoints see [api-reference.md](api-reference.md). Base HTTP methods follow this pattern:
 ```python
 # GET single
 result = cw.get("service/tickets/123")
@@ -363,15 +442,14 @@ success = cw.delete("service/tickets", record_id=123)
 
 ## Rate Limiting
 
-ConnectWise APIs have rate limits (typically 60-100 requests/minute). The integration detects 429 responses:
+The client handles rate limiting automatically. When a 429 response is received it retries with exponential backoff (configurable via `max_retries` and `retry_backoff_base` on the client). You only need to catch `ConnectWiseRateLimitError` if you want to handle exhausted retries yourself:
 
 ```python
 try:
     tickets = cw.get_tickets(conditions="...")
 except ConnectWiseRateLimitError as e:
-    if e.retry_after:
-        time.sleep(e.retry_after)
-        tickets = cw.get_tickets(conditions="...")
+    # Only raised after all retries are exhausted
+    print(f"Still rate limited after retries. retry_after={e.retry_after}s")
 ```
 
 ## When Helping Users
@@ -380,9 +458,12 @@ except ConnectWiseRateLimitError as e:
 2. **Use high-level methods when available** - They return dataclasses
 3. **Check for None on get operations** - Don't catch exceptions
 4. **Use properties on dataclasses** - Cleaner than dict access
-5. **Be specific about conditions** - Help users avoid 100k+ result queries
+5. **Be specific about conditions** - Help users avoid 100k+ result queries; suggest a count check first
 6. **Suggest ticket_defaults** - For apps creating many similar tickets
 7. **Use `parse_cw_datetime` for datetime parsing** - Don't write inline `fromisoformat` logic; use the shared helper from `connectwise.utils`
+8. **Use `orderby="id desc"` not `"dateEntered desc"`** - `dateEntered` is unindexed and will timeout on large environments
+9. **Use `get_ticket_schedule` for resource assignment** - There is no ticket members sub-endpoint; dispatched resources are schedule entries
+10. **Use `closedDate=null` for open opportunities** - Not `closedFlag=false` (that field doesn't exist on the opportunity object)
 
 ## Example: Complete Ticket Workflow
 
